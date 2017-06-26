@@ -1,23 +1,20 @@
 #!/bin/bash
 
-# Secure OpenVPN server installer for Debian, Ubuntu, CentOS and Arch Linux
-# https://github.com/Angristan/OpenVPN-install
+# Secure OpenVPN server installer for Debian and Ubuntu
+# Derived from https://github.com/Angristan/OpenVPN-install
+# This version is Ubuntu only (tested on 16.04) and installs two instances, a UDP (1194) and a TCP (443) instance
 
 
 if [[ "$EUID" -ne 0 ]]; then
-	echo "Sorry, you need to run this as root"
+	echo "Sorry, you need to run this as root."
 	exit 1
 fi
 
 if [[ ! -e /dev/net/tun ]]; then
-	echo "TUN is not available"
+	echo "TUN is not available. Please install TUN."
 	exit 2
 fi
 
-if grep -qs "CentOS release 5" "/etc/redhat-release"; then
-	echo "CentOS 5 is too old and not supported"
-	exit 3
-fi
 
 if [[ -e /etc/debian_version ]]; then
 	OS="debian"
@@ -40,18 +37,8 @@ if [[ -e /etc/debian_version ]]; then
 			exit 4
 		fi
 	fi
-elif [[ -e /etc/centos-release || -e /etc/redhat-release ]]; then
-	OS=centos
-	RCLOCAL='/etc/rc.d/rc.local'
-	SYSCTL='/etc/sysctl.conf'
-	# Needed for CentOS 7
-	chmod +x /etc/rc.d/rc.local
-elif [[ -e /etc/arch-release ]]; then
-	OS=arch
-	RCLOCAL='/etc/rc.local'
-	SYSCTL='/etc/sysctl.d/openvpn.conf'
 else
-	echo "Looks like you aren't running this installer on a Debian, Ubuntu, CentOS or ArchLinux system"
+	echo "Looks like you aren't running this installer on a Debian or Ubuntu."
 	exit 4
 fi
 
@@ -83,7 +70,7 @@ fi
 # Get Internet network interface with default route
 NIC=$(ip -4 route ls | grep default | grep -Po '(?<=dev )(\S+)')
 
-if [[ -e /etc/openvpn/server.conf ]]; then
+if [[ -e /etc/openvpn/server-base.include ]]; then
 	while :
 	do
 	clear
@@ -94,9 +81,8 @@ if [[ -e /etc/openvpn/server.conf ]]; then
 		echo "What do you want to do?"
 		echo "   1) Add a cert for a new user"
 		echo "   2) Revoke existing user cert"
-		echo "   3) Remove OpenVPN"
-		echo "   4) Exit"
-		read -p "Select an option [1-4]: " option
+		echo "   3) Exit"
+		read -p "Select an option [1-3]: " option
 		case $option in
 			1)
 			echo ""
@@ -141,54 +127,12 @@ if [[ -e /etc/openvpn/server.conf ]]; then
 			echo "Exiting..."
 			exit
 			;;
-			3)
-			echo ""
-			read -p "Do you really want to remove OpenVPN? [y/n]: " -e -i n REMOVE
-			if [[ "$REMOVE" = 'y' ]]; then
-				PORT=$(grep '^port ' /etc/openvpn/server.conf | cut -d " " -f 2)
-				if pgrep firewalld; then
-					# Using both permanent and not permanent rules to avoid a firewalld reload.
-					firewall-cmd --zone=public --remove-port=$PORT/udp
-					firewall-cmd --zone=trusted --remove-source=10.8.0.0/24
-					firewall-cmd --permanent --zone=public --remove-port=$PORT/udp
-					firewall-cmd --permanent --zone=trusted --remove-source=10.8.0.0/24
-				fi
-				if iptables -L -n | grep -qE 'REJECT|DROP'; then
-					sed -i "/iptables -I INPUT -p udp --dport $PORT -j ACCEPT/d" $RCLOCAL
-					sed -i "/iptables -I FORWARD -s 10.8.0.0\/24 -j ACCEPT/d" $RCLOCAL
-					sed -i "/iptables -I FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT/d" $RCLOCAL
-				fi
-				sed -i '/iptables -t nat -A POSTROUTING -s 10.8.0.0\/24 -j SNAT --to /d' $RCLOCAL
-				if hash sestatus 2>/dev/null; then
-					if sestatus | grep "Current mode" | grep -qs "enforcing"; then
-						if [[ "$PORT" != '1194' ]]; then
-							semanage port -d -t openvpn_port_t -p udp $PORT
-						fi
-					fi
-				fi
-				if [[ "$OS" = 'debian' ]]; then
-					apt-get autoremove --purge -y openvpn
-				elif [[ "$OS" = 'arch' ]]; then
-					pacman -R openvpn --noconfirm
-				else
-					yum remove openvpn -y
-				fi
-				rm -rf /etc/openvpn
-				rm -rf /usr/share/doc/openvpn*
-				echo ""
-				echo "OpenVPN removed!"
-			else
-				echo ""
-				echo "Removal aborted!"
-			fi
-			exit
-			;;
-			4) exit;;
+			3) exit;;
 		esac
 	done
 else
 	clear
-	echo "Welcome to the secure OpenVPN installer (github.com/Angristan/OpenVPN-install)"
+	echo "Welcome to the secure OpenVPN installer (Chris James)"
 	echo ""
 	# OpenVPN setup and first user creation
 	echo "I need to ask you a few questions before starting the setup"
@@ -199,14 +143,8 @@ else
 	echo "Otherwise, it should be your public IPv4 address."
 	read -p "IP address: " -e -i $IP IP
 	echo ""
-	echo "What port do you want for OpenVPN?"
-	read -p "Port: " -e -i 1194 PORT
-	echo ""
-	echo "What protocol do you want for OpenVPN?"
-	echo "Unless UDP is blocked, you should not use TCP (unnecessarily slower)"
-	while [[ $PROTOCOL != "UDP" && $PROTOCOL != "TCP" ]]; do
-		read -p "Protocol [UDP/TCP]: " -e -i UDP PROTOCOL
-	done
+	echo "What hostname do you want for OpenVPN?"
+	read -p "Hostname: " -e HOSTNM
 	echo ""
 	echo "What DNS do you want to use with the VPN?"
 	echo "   1) Current system resolvers (in /etc/resolv.conf)"
@@ -220,7 +158,7 @@ else
 	done
 	echo ""
 	echo "See https://github.com/Angristan/OpenVPN-install#encryption to learn more about "
-	echo "the encryption in OpenVPN and the choices I made in this script."
+	echo "the encryption in OpenVPN and the choices made in this script."
 	echo "Please note that all the choices proposed are secure (to a different degree)"
 	echo "and are still viable to date, unlike some default OpenVPN options"
 	echo ''
@@ -298,8 +236,38 @@ else
 		RSA_KEY_SIZE="4096"
 		;;
 	esac
+
+	echo "We can secure this VPN using Duo 2FA.  Would you like to do so?"
+	while [[ $USEDUO != "y" && $USEDUO != "n" ]]; do
+			read -p "Use Duo ? [y/n]: " -e USEDUO
+	done
+	if [[ "$USEDUO" = "y" ]]; then
+	
+		echo ""
+		echo "Duo: Enter IKEY "
+		while [[ $DUOIKEY = "" ]]; do
+			echo "As per Duo web interface"
+			read -p "IKEY: " -e DUOIKEY
+		done
+
+		echo ""
+		echo "Duo: Enter SKEY "
+		while [[ $DUOSKEY = "" ]]; do
+			echo "As per Duo web interface"
+			read -p "SKEY: " -e DUOSKEY
+		done
+
+		echo ""
+		echo "Duo: Enter API hostname "
+		while [[ $DUOHOST = "" ]]; do
+			echo "As per Duo web interface"
+			read -p "Hostname: " -e DUOHOST
+		done
+
+	fi
+
 	echo ""
-	echo "Finally, tell me a name for the client certificate and configuration"
+	echo "Finally, tell me a name for the first client certificate and configuration"
 	while [[ $CLIENT = "" ]]; do
 		echo "Please, use one word only, no special characters"
 		read -p "Client name: " -e -i client CLIENT
@@ -338,51 +306,26 @@ else
 		# Ubuntu >= 16.04 and Debian > 8 have OpenVPN > 2.3.3 without the need of a third party repository.
 		# The we install OpenVPN
 		apt-get install openvpn iptables openssl wget ca-certificates curl -y
-	elif [[ "$OS" = 'centos' ]]; then
-		yum install epel-release -y
-		yum install openvpn iptables openssl wget ca-certificates curl -y
-	else
-		# Else, the distro is ArchLinux
-		echo ""
-		echo ""
-		echo "As you're using ArchLinux, I need to update the packages on your system to install those I need."
-		echo "Not doing that could cause problems between dependencies, or missing files in repositories."
-		echo ""
-		echo "Continuing will update your installed packages and install needed ones."
-		while [[ $CONTINUE != "y" && $CONTINUE != "n" ]]; do
-			read -p "Continue ? [y/n]: " -e -i y CONTINUE
-		done
-		if [[ "$CONTINUE" = "n" ]]; then
-			echo "Ok, bye !"
-			exit 4
-		fi
-		
-		if [[ "$OS" = 'arch' ]]; then
-		# Install rc.local
-		echo "[Unit]
-Description=/etc/rc.local compatibility
 
-[Service]
-Type=oneshot
-ExecStart=/etc/rc.local
-RemainAfterExit=yes
+		# Add Duo
+		if [[ "$USEDUO" = "y" ]]; then
+			apt-get install python -y
+			apt-get install build-essential -y
+			wget https://github.com/duosecurity/duo_openvpn/tarball/master -O duo.tgz
+			tar -xvf duo.tgz
+			cd duosecurity*
+			make && make install
+			cd ..
+			rm -rf duosecurity*
+		fi
 
-[Install]
-WantedBy=multi-user.target" > /etc/systemd/system/rc-local.service
-			chmod +x /etc/rc.local
-			systemctl enable rc-local.service
-			if ! grep '#!' $RCLOCAL; then
-				echo "#!/bin/bash" > $RCLOCAL
-			fi
-		fi
+		# Set hostname
+		echo "$HOSTNM" > /etc/hostname
+		SHORTHOST=`echo $HOSTNM | cut -d"." -f1`
+		echo "$IP	$SHORTHOST" >> /etc/hosts
+		echo "$IP	$HOSTNM" >> /etc/hosts
+		hostname $SHORTHOST
 		
-		# Install dependencies
-		pacman -Syu openvpn iptables openssl wget ca-certificates curl --needed --noconfirm
-		if [[ "$OS" = 'arch' ]]; then
-			touch /etc/iptables/iptables.rules # iptables won't start if this file does not exist
-			systemctl enable iptables
-			systemctl start iptables
-		fi
 	fi
 	# Find out if the machine uses nogroup or nobody for the permissionless group
 	if grep -qs "^nogroup:" /etc/group; then
@@ -418,13 +361,18 @@ WantedBy=multi-user.target" > /etc/systemd/system/rc-local.service
 	# Make cert revocation list readable for non-root
 	chmod 644 /etc/openvpn/crl.pem
 	
-	# Generate server.conf
-	echo "port $PORT" > /etc/openvpn/server.conf
-	if [[ "$PROTOCOL" = 'UDP' ]]; then
-		echo "proto udp" >> /etc/openvpn/server.conf
-	elif [[ "$PROTOCOL" = 'TCP' ]]; then
-		echo "proto tcp" >> /etc/openvpn/server.conf
-	fi
+	# Generate server config files
+	echo "port 1194" > /etc/openvpn/server-udp.conf
+	echo "proto udp" >> /etc/openvpn/server-udp.conf
+	echo "port 443" > /etc/openvpn/server-tcp.conf
+	echo "proto tcp" >> /etc/openvpn/server-tcp.conf
+	echo "config server-base.include" >> /etc/openvpn/server-udp.conf
+	echo "config server-base.include" >> /etc/openvpn/server-tcp.conf
+	echo "server 10.9.0.0 255.255.255.0" >> /etc/openvpn/server-udp.conf
+	echo "server 10.8.0.0 255.255.255.0" >> /etc/openvpn/server-tcp.conf
+
+	# Generate server-base.include
+
 	echo "dev tun
 user nobody
 group $NOGROUP
@@ -432,38 +380,45 @@ persist-key
 persist-tun
 keepalive 10 120
 topology subnet
-server 10.8.0.0 255.255.255.0
-ifconfig-pool-persist ipp.txt" >> /etc/openvpn/server.conf
+ifconfig-pool-persist ipp.txt
+reneg-sec 0" >> /etc/openvpn/server-base.include
+
+	if [[ "$USEDUO" = "y" ]]; then
+			echo "plugin /opt/duo/duo_openvpn.so $DUOIKEY $DUOSKEY $DUOHOST" >> /etc/openvpn/server-base.include
+			# Use automatic push https://duo.com/docs/openvpn-faq
+			echo "auth-user-pass-optional" >> /etc/openvpn/server-base.include
+	fi
+
 	# DNS resolvers
 	case $DNS in
 		1)
 		# Obtain the resolvers from resolv.conf and use them for OpenVPN
 		grep -v '#' /etc/resolv.conf | grep 'nameserver' | grep -E -o '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | while read line; do
-			echo "push \"dhcp-option DNS $line\"" >> /etc/openvpn/server.conf
+			echo "push \"dhcp-option DNS $line\"" >> /etc/openvpn/server-base.include
 		done
 		;;
 		2) #FDN
-		echo 'push "dhcp-option DNS 80.67.169.12"' >> /etc/openvpn/server.conf
-		echo 'push "dhcp-option DNS 80.67.169.40"' >> /etc/openvpn/server.conf
+		echo 'push "dhcp-option DNS 80.67.169.12"' >> /etc/openvpn/server-base.include
+		echo 'push "dhcp-option DNS 80.67.169.40"' >> /etc/openvpn/server-base.include
 		;;
 		3) #DNS.WATCH
-		echo 'push "dhcp-option DNS 84.200.69.80"' >> /etc/openvpn/server.conf
-		echo 'push "dhcp-option DNS 84.200.70.40"' >> /etc/openvpn/server.conf
+		echo 'push "dhcp-option DNS 84.200.69.80"' >> /etc/openvpn/server-base.include
+		echo 'push "dhcp-option DNS 84.200.70.40"' >> /etc/openvpn/server-base.include
 		;;
 		4) #OpenDNS
-		echo 'push "dhcp-option DNS 208.67.222.222"' >> /etc/openvpn/server.conf
-		echo 'push "dhcp-option DNS 208.67.220.220"' >> /etc/openvpn/server.conf
+		echo 'push "dhcp-option DNS 208.67.222.222"' >> /etc/openvpn/server-base.include
+		echo 'push "dhcp-option DNS 208.67.220.220"' >> /etc/openvpn/server-base.include
 		;;
 		5) #Google
-		echo 'push "dhcp-option DNS 8.8.8.8"' >> /etc/openvpn/server.conf
-		echo 'push "dhcp-option DNS 8.8.4.4"' >> /etc/openvpn/server.conf
+		echo 'push "dhcp-option DNS 8.8.8.8"' >> /etc/openvpn/server-base.include
+		echo 'push "dhcp-option DNS 8.8.4.4"' >> /etc/openvpn/server-base.include
 		;;
 		6) #Yandex Basic
-		echo 'push "dhcp-option DNS 77.88.8.8"' >> /etc/openvpn/server.conf
-		echo 'push "dhcp-option DNS 77.88.8.1"' >> /etc/openvpn/server.conf
+		echo 'push "dhcp-option DNS 77.88.8.8"' >> /etc/openvpn/server-base.include
+		echo 'push "dhcp-option DNS 77.88.8.1"' >> /etc/openvpn/server-base.include
 		;;
 	esac
-echo 'push "redirect-gateway def1 bypass-dhcp" '>> /etc/openvpn/server.conf
+echo 'push "redirect-gateway def1 bypass-dhcp" '>> /etc/openvpn/server-base.include
 echo "crl-verify crl.pem
 ca ca.crt
 cert server.crt
@@ -476,7 +431,7 @@ tls-server
 tls-version-min 1.2
 tls-cipher TLS-DHE-RSA-WITH-AES-128-GCM-SHA256
 status openvpn.log
-verb 3" >> /etc/openvpn/server.conf
+verb 3" >> /etc/openvpn/server-base.include
 
 	# Create the sysctl configuration file if needed (mainly for Arch Linux)
 	if [[ ! -e $SYSCTL ]]; then
@@ -498,82 +453,34 @@ verb 3" >> /etc/openvpn/server.conf
 	chmod +x $RCLOCAL
 	# Set NAT for the VPN subnet
 	iptables -t nat -A POSTROUTING -o $NIC -s 10.8.0.0/24 -j MASQUERADE
+	iptables -t nat -A POSTROUTING -o $NIC -s 10.9.0.0/24 -j MASQUERADE
 	sed -i "1 a\iptables -t nat -A POSTROUTING -o $NIC -s 10.8.0.0/24 -j MASQUERADE" $RCLOCAL
-	if pgrep firewalld; then
-		# We don't use --add-service=openvpn because that would only work with
-		# the default port. Using both permanent and not permanent rules to
-		# avoid a firewalld reload.
-		if [[ "$PROTOCOL" = 'UDP' ]]; then
-			firewall-cmd --zone=public --add-port=$PORT/udp
-			firewall-cmd --permanent --zone=public --add-port=$PORT/udp
-		elif [[ "$PROTOCOL" = 'TCP' ]]; then
-			firewall-cmd --zone=public --add-port=$PORT/tcp
-			firewall-cmd --permanent --zone=public --add-port=$PORT/tcp
-		fi
-		firewall-cmd --zone=trusted --add-source=10.8.0.0/24
-		firewall-cmd --permanent --zone=trusted --add-source=10.8.0.0/24
-	fi
+	sed -i "1 a\iptables -t nat -A POSTROUTING -o $NIC -s 10.9.0.0/24 -j MASQUERADE" $RCLOCAL
 	if iptables -L -n | grep -qE 'REJECT|DROP'; then
 		# If iptables has at least one REJECT rule, we asume this is needed.
 		# Not the best approach but I can't think of other and this shouldn't
 		# cause problems.
-		if [[ "$PROTOCOL" = 'UDP' ]]; then
-			iptables -I INPUT -p udp --dport $PORT -j ACCEPT
-		elif [[ "$PROTOCOL" = 'TCP' ]]; then
-			iptables -I INPUT -p tcp --dport $PORT -j ACCEPT
-		fi
+		iptables -I INPUT -p udp --dport 1194 -j ACCEPT
+		iptables -I INPUT -p tcp --dport 443 -j ACCEPT
 		iptables -I FORWARD -s 10.8.0.0/24 -j ACCEPT
+		iptables -I FORWARD -s 10.9.0.0/24 -j ACCEPT
 		iptables -I FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
-		if [[ "$PROTOCOL" = 'UDP' ]]; then
-			sed -i "1 a\iptables -I INPUT -p udp --dport $PORT -j ACCEPT" $RCLOCAL
-		elif [[ "$PROTOCOL" = 'TCP' ]]; then
-			sed -i "1 a\iptables -I INPUT -p tcp --dport $PORT -j ACCEPT" $RCLOCAL
-		fi
+		sed -i "1 a\iptables -I INPUT -p udp --dport 1194 -j ACCEPT" $RCLOCAL
+		sed -i "1 a\iptables -I INPUT -p tcp --dport 443 -j ACCEPT" $RCLOCAL
 		sed -i "1 a\iptables -I FORWARD -s 10.8.0.0/24 -j ACCEPT" $RCLOCAL
+		sed -i "1 a\iptables -I FORWARD -s 10.9.0.0/24 -j ACCEPT" $RCLOCAL
 		sed -i "1 a\iptables -I FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT" $RCLOCAL
 	fi
-	# If SELinux is enabled and a custom port was selected, we need this
-	if hash sestatus 2>/dev/null; then
-		if sestatus | grep "Current mode" | grep -qs "enforcing"; then
-			if [[ "$PORT" != '1194' ]]; then
-				# semanage isn't available in CentOS 6 by default
-				if ! hash semanage 2>/dev/null; then
-					yum install policycoreutils-python -y
-				fi
-				if [[ "$PROTOCOL" = 'UDP' ]]; then
-					semanage port -a -t openvpn_port_t -p udp $PORT
-				elif [[ "$PROTOCOL" = 'TCP' ]]; then
-					semanage port -a -t openvpn_port_t -p tcp $PORT
-				fi
-			fi
-		fi
-	fi
+	
 	# And finally, restart OpenVPN
-	if [[ "$OS" = 'debian' ]]; then
-		# Little hack to check for systemd
-		if pgrep systemd-journal; then
-			systemctl restart openvpn@server.service
-		else
-			/etc/init.d/openvpn restart
-		fi
-	else
-		if pgrep systemd-journal; then
-			if [[ "$OS" = 'arch' ]]; then
-				#Workaround to avoid rewriting the entire script for Arch
-				sed -i 's|/etc/openvpn/server|/etc/openvpn|' /usr/lib/systemd/system/openvpn-server@.service
-				sed -i 's|%i.conf|server.conf|' /usr/lib/systemd/system/openvpn-server@.service
-				systemctl daemon-reload
-				systemctl restart openvpn-server@openvpn.service
-				systemctl enable openvpn-server@openvpn.service
-			else
-				systemctl restart openvpn@server.service
-				systemctl enable openvpn@server.service
-			fi
-		else
-			service openvpn restart
-			chkconfig openvpn on
-		fi
-	fi
+	
+
+	systemctl enable openvpn@server-udp
+	systemctl enable openvpn@server-tcp
+	systemctl restart openvpn@server-udp
+	systemctl restart openvpn@server-tcp
+
+
 	# Try to detect a NATed connection and ask about it to potential LowEndSpirit/Scaleway users
 	EXTERNALIP=$(wget -qO- ipv4.icanhazip.com)
 	if [[ "$IP" != "$EXTERNALIP" ]]; then
@@ -589,13 +496,10 @@ verb 3" >> /etc/openvpn/server.conf
 		fi
 	fi
 	# client-template.txt is created so we have a template to add further users later
-	echo "client" > /etc/openvpn/client-template.txt
-	if [[ "$PROTOCOL" = 'UDP' ]]; then
-		echo "proto udp" >> /etc/openvpn/client-template.txt
-	elif [[ "$PROTOCOL" = 'TCP' ]]; then
-		echo "proto tcp-client" >> /etc/openvpn/client-template.txt
-	fi
-	echo "remote $IP $PORT
+	echo "
+client
+remote $HOSTNM 1194 udp
+remote $HOSTNM 443 tcp
 dev tun
 resolv-retry infinite
 nobind
@@ -608,7 +512,19 @@ tls-client
 tls-version-min 1.2
 tls-cipher TLS-DHE-RSA-WITH-AES-128-GCM-SHA256
 setenv opt block-outside-dns
-verb 3" >> /etc/openvpn/client-template.txt
+verb 3
+reneg-sec 0
+#viscosity name $HOSTNM
+#viscosity autoreconnect false
+#viscosity dns automatic
+#viscosity usepeerdns true
+#viscosity manageadapter true
+#viscosity startonopen false" > /etc/openvpn/client-template.txt
+
+	# Disabled as using automatic push https://duo.com/docs/openvpn-faq
+	#if [[ "$USEDUO" = "y" ]]; then
+	#		echo "auth-user-pass" >> /etc/openvpn/client-template.txt
+	#fi
 
 	# Generate the custom client.ovpn
 	newclient "$CLIENT"
