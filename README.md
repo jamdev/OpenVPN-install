@@ -10,6 +10,7 @@ It adds:
 * Dual instance UDP+TCP
 * Sets server hostname (designed to be run on newly instantiated VPSs only)
 * Optionally adds Duo 2FA
+* Optionally adds Authy 2FA
 
 It removes support for non-Debian based distros.  It is not tested on any distro other than 16.04.  It also removes support for uninstalling, as it is designed to be used on 'throwaway' VPS instances.
 

@@ -237,12 +237,20 @@ else
 		;;
 	esac
 
-	echo "We can secure this VPN using Duo 2FA.  Would you like to do so?"
-	while [[ $USEDUO != "y" && $USEDUO != "n" ]]; do
-			read -p "Use Duo ? [y/n]: " -e USEDUO
+	echo "We can secure this VPN using 2FA.  Would you like to do so?"
+
+	echo ""
+	echo "Choose which 2FA provider to use:"
+	echo "   1) No 2FA "
+	echo "   2) Authy"
+	echo "   2) Duo"
+
+	while [[ $PROV2FA != "1" && $PROV2FA != "2" ]]; do
+		read -p "2FA Provider [1-2]: " -e -i 1 PROV2FA
 	done
-	if [[ "$USEDUO" = "y" ]]; then
-	
+	case $PROV2FA in
+		1)
+		USEDUO="y"
 		echo ""
 		echo "Duo: Enter IKEY "
 		while [[ $DUOIKEY = "" ]]; do
@@ -263,8 +271,21 @@ else
 			echo "As per Duo web interface"
 			read -p "Hostname: " -e DUOHOST
 		done
+		;;
+		2)
+		USEAUTHY="y"
+		echo ""
+		echo "Authy: Enter API key "
+		while [[ $AUTHYKEY = "" ]]; do
+			echo "As per Authy web interface"
+			read -p "Authy API Key: " -e AUTHYKEY
+		done
+		;;
+	
+	esac
 
-	fi
+
+	
 
 	echo ""
 	echo "Finally, tell me a name for the first client certificate and configuration"
@@ -317,6 +338,21 @@ else
 			make && make install
 			cd ..
 			rm -rf duosecurity*
+		fi
+
+		# Add Authy
+		if [[ "$USEAUTHY" = "y" ]]; then
+			apt-get install build-essential -y
+			apt-get install libcurl4-gnutls-dev -y
+			wget https://github.com/authy/authy-openvpn/archive/master.tar.gz -O authy.tgz
+			tar -xvf authy.tgz
+			cd authy-openvpn*
+			make && make install
+			cp scripts/authy-vpn-add-user ../openvpn-addauthytoclient.sh 
+			sed -i 's/openvpn\/\*\.conf/openvpn\/\*\.include/' ../openvpn-addauthytoclient.sh 
+			cd ..
+			rm -rf authy*
+			rm /usr/sbin/authy-vpn-add-user
 		fi
 
 		# Set hostname
@@ -389,6 +425,11 @@ reneg-sec 0" >> /etc/openvpn/server-base.include
 			echo "auth-user-pass-optional" >> /etc/openvpn/server-base.include
 	fi
 
+	if [[ "$USEAUTHY" = "y" ]]; then
+			echo "plugin /usr/lib/authy/authy-openvpn.so https://api.authy.com/protected/json $AUTHYKEY nopam" >> /etc/openvpn/server-base.include
+	fi
+
+	
 	# DNS resolvers
 	case $DNS in
 		1)
@@ -431,7 +472,7 @@ tls-server
 tls-version-min 1.2
 tls-cipher TLS-DHE-RSA-WITH-AES-128-GCM-SHA256
 status openvpn.log
-verb 3" >> /etc/openvpn/server-base.include
+verb 4" >> /etc/openvpn/server-base.include
 
 	# Create the sysctl configuration file if needed (mainly for Arch Linux)
 	if [[ ! -e $SYSCTL ]]; then
@@ -521,10 +562,9 @@ reneg-sec 0
 #viscosity manageadapter true
 #viscosity startonopen false" > /etc/openvpn/client-template.txt
 
-	# Disabled as using automatic push https://duo.com/docs/openvpn-faq
-	#if [[ "$USEDUO" = "y" ]]; then
-	#		echo "auth-user-pass" >> /etc/openvpn/client-template.txt
-	#fi
+	if [[ "$USEAUTHY" = "y" ]]; then
+			echo "auth-user-pass" >> /etc/openvpn/client-template.txt
+	fi
 
 	# Generate the custom client.ovpn
 	newclient "$CLIENT"
@@ -533,5 +573,8 @@ reneg-sec 0
 	echo ""
 	echo "Your client config is available at ~/$CLIENT.ovpn"
 	echo "If you want to add more clients, you simply need to run this script another time!"
+	if [[ "$USEAUTHY" = "y" ]]; then
+			echo "As you are using Authy, when you add a new client, you must then also run openvpn-addauthytoclient.sh"
+	fi
 fi
 exit 0;
