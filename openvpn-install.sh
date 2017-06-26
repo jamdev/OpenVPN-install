@@ -243,13 +243,13 @@ else
 	echo "Choose which 2FA provider to use:"
 	echo "   1) No 2FA "
 	echo "   2) Authy"
-	echo "   2) Duo"
+	echo "   3) Duo"
 
-	while [[ $PROV2FA != "1" && $PROV2FA != "2" ]]; do
+	while [[ $PROV2FA != "1" && $PROV2FA != "2"  && $PROV2FA != "3" ]]; do
 		read -p "2FA Provider [1-2]: " -e -i 1 PROV2FA
 	done
 	case $PROV2FA in
-		1)
+		3)
 		USEDUO="y"
 		echo ""
 		echo "Duo: Enter IKEY "
@@ -280,6 +280,9 @@ else
 			echo "As per Authy web interface"
 			read -p "Authy API Key: " -e AUTHYKEY
 		done
+		;;
+		1)
+		echo "No 2FA being used"
 		;;
 	
 	esac
@@ -353,6 +356,7 @@ else
 			cd ..
 			rm -rf authy*
 			rm /usr/sbin/authy-vpn-add-user
+			chmod 644 /etc/openvpn/authy/*.conf
 		fi
 
 		# Set hostname
@@ -471,7 +475,8 @@ $CIPHER
 tls-server
 tls-version-min 1.2
 tls-cipher TLS-DHE-RSA-WITH-AES-128-GCM-SHA256
-status openvpn.log
+status /var/log/openvpn.log
+log /var/log/openvpn.log
 verb 4" >> /etc/openvpn/server-base.include
 
 	# Create the sysctl configuration file if needed (mainly for Arch Linux)
