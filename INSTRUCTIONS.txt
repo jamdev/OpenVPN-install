@@ -1,0 +1,30 @@
+
+# Files are installed in OpenVPN-install directory
+# eg.
+cd ~/admin-tools/OpenVPN-install
+
+###### ADD A USER #####################
+
+# Add a new user
+
+./openvpn-install.sh
+
+# follow prompts
+
+./openvpn-addauthytoclient.sh
+
+# certificate is installed at ~/[username].ovpn
+# please delete once downloaded
+
+
+####### REMOVE A USER ###############
+
+# Step 1 - Remove a user from OpenVPN
+
+./openvpn-install.sh
+
+# Step 2 - Remove a user from Authy
+
+Login to https://www.twilio.com/user/account/ahoy-authy
+Delete user
+
