@@ -27,4 +27,5 @@ cd ~/admin-tools/OpenVPN-install
 
 Login to https://www.twilio.com/user/account/ahoy-authy
 Delete user
+Manually remove entry from /etc/openvpn/authy/authy-vpn.conf by deleting relevant line
 
