@@ -49,9 +49,10 @@ function check_api_key() {
     fi
 }
 
-# usage: register_user "login" "<email>" "<country-code>" "<cellphone>"
+# usage: register_user "login" "<email>" "<country-code>" "<cellphone>" "<username>" 
 function register_user() {
     local login=$1
+    local username=$5
     url="$AUTHY_URL/protected/json/users/new?api_key=${AUTHY_API_KEY} -d user[email]=$2 -d user[country_code]=$3 -d user[cellphone]=$4 -s"
 
     green "Registering the user with Authy"
@@ -87,7 +88,7 @@ function register_user() {
         user_id=`echo $response | grep -o '[0-9]\{1,\}'` # match the authy id
         if [[ $user_id ]]
         then
-            echo "$login $user_id" >> $CONFIG_FILE
+            echo "$login $user_id $username" >> $CONFIG_FILE
             green "Success: User $login was registered with AUTHY_ID $user_id."
             return 0
         else
@@ -117,24 +118,26 @@ function read_config()
 
 function register_users()
 {
+    echo "---------------------------------------------"
     echo "This script is to add users to Authy Open VPN"
-    echo "For each user you will need to provide the vpn login, e-mail, country code and cellphone"
-    echo "For PAM, login is the *nix login or your PAM login username."
-    echo "For certificate based Auth we recommend you use e-mails as the login."
+    echo "---------------------------------------------"
 
-    echo -n "Login: "
-    read login
+    echo -n "OpenVPN certificate name (without .ovpn): "
+    read username
 
     echo -n "Email: "
     read email
 
-    echo -n "Country Code (EG. 1 for US): "
-    read country_code
+    echo -n "VPN Login: "
+    read -i $email -e login
 
-    echo -n "Cellphone: "
+    echo -n "Country Code (EG. 44 for UK): "
+    read -i "44" -e country_code
+
+    echo -n "Mobile phone (without leading 0): "
     read cellphone
 
-    register_user $login $email $country_code $cellphone
+    register_user $login $email $country_code $cellphone $username
 
     if [[ $? -ne 0 ]] ; then
         red "Failed to add user. Try again."
@@ -156,12 +159,12 @@ if [ $? -ne 0 ] ; then
     exit 1
 fi
 chown root $CONFIG_FILE
-chmod 600  $CONFIG_FILE
+chmod 644  $CONFIG_FILE
 
 check_api_key
 register_users
 
-chmod 644 /etc/openvpn/authy/*.conf
-echo "You need to create link in /etc/openvpn/authy/authy-vpn.conf"
-echo "And you may need to chmod 644 that file"
+echo "Done. In case of problems check link in /etc/openvpn/authy/authy-vpn.conf"
+echo "If OpenVPN won't start check permissions on that file (644)."
+
 service openvpn restart
